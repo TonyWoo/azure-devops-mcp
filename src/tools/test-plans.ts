@@ -7,6 +7,7 @@ import { TestPlanCreateParams } from "azure-devops-node-api/interfaces/TestPlanI
 import { TestCaseResult, TestOutcome, TestRun } from "azure-devops-node-api/interfaces/TestInterfaces.js";
 import { z } from "zod";
 import { apiVersion } from "../utils.js";
+import { getRestApiVersion, isServerUrl } from "../connection-settings.js";
 
 const TEST_RESULT_PAGE_SIZE = 1_000;
 const TEST_RESULT_CONCURRENCY = 5;
@@ -68,7 +69,7 @@ function configureTestPlanTools(server: McpServer, tokenProvider: () => Promise<
         }
 
         if (action === "list_plans") {
-          const params = new URLSearchParams({ "api-version": apiVersion });
+          const params = new URLSearchParams({ "api-version": getRestApiVersion(connection.serverUrl, apiVersion) });
           if (filterActivePlans) params.append("filterActivePlans", "true");
           if (includePlanDetails) params.append("includePlanDetails", "true");
           if (continuationToken) params.append("continuationToken", continuationToken);
@@ -92,7 +93,7 @@ function configureTestPlanTools(server: McpServer, tokenProvider: () => Promise<
         } else if (action === "list_suites") {
           if (!planId) return { content: [{ type: "text", text: "planId is required for list_suites" }], isError: true };
 
-          const params = new URLSearchParams({ "api-version": apiVersion, "expand": "children" });
+          const params = new URLSearchParams({ "api-version": getRestApiVersion(connection.serverUrl, apiVersion), "expand": "children" });
           if (continuationToken) params.append("continuationToken", continuationToken);
           const url = `${connection.serverUrl}/${encodeURIComponent(project)}/_apis/testplan/Plans/${planId}/Suites?${params.toString()}`;
 
@@ -143,7 +144,7 @@ function configureTestPlanTools(server: McpServer, tokenProvider: () => Promise<
           if (!planId) return { content: [{ type: "text", text: "planId is required for list_cases" }], isError: true };
           if (!suiteId) return { content: [{ type: "text", text: "suiteId is required for list_cases" }], isError: true };
 
-          const params = new URLSearchParams({ "api-version": "7.2-preview.3" });
+          const params = new URLSearchParams({ "api-version": getRestApiVersion(connection.serverUrl, "7.2-preview.3") });
           if (continuationToken) params.append("continuationToken", continuationToken);
           const url = `${connection.serverUrl}/${encodeURIComponent(project)}/_apis/testplan/Plans/${planId}/Suites/${suiteId}/TestCase?${params.toString()}`;
 
@@ -187,7 +188,7 @@ function configureTestPlanTools(server: McpServer, tokenProvider: () => Promise<
     async ({ project, buildid, outcomes }) => {
       try {
         const connection = await connectionProvider();
-        const testResultsApi = await connection.getTestResultsApi();
+        const testResultsApi = isServerUrl(connection.serverUrl) ? await connection.getTestApi() : await connection.getTestResultsApi();
         const buildUri = `vstfs:///Build/Build/${buildid}`;
         const testRuns: TestRun[] = [];
 

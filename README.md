@@ -3,7 +3,7 @@
 > [!IMPORTANT]
 > We recommend using the [Remote MCP Server](https://learn.microsoft.com/en-us/azure/devops/mcp-server/remote-mcp-server) instead of this local server. It requires no installation and gets new features first.
 >
-> [Learn more](#remote-mcp-server-recommended)
+> [Learn more](#remote-mcp-server-recommended). For self-hosted Azure DevOps Server 2022.1, use the [local Server setup](#azure-devops-server-20221-self-hosted).
 
 This project gives AI agents access to Azure DevOps through the Model Context Protocol (MCP). Use the hosted remote server for the simplest setup, or run the local server when you need a `stdio` connection.
 
@@ -14,12 +14,13 @@ This project gives AI agents access to Azure DevOps through the Model Context Pr
 3. [Remote MCP Server (Recommended)](#remote-mcp-server-recommended)
 4. [Supported Tools](#supported-tools)
 5. [Local MCP Server Installation (Optional)](#local-mcp-server-installation-optional)
-6. [Using Domains (Local Server)](#using-domains-local-server)
-7. [Project and Team Defaults (Local Server)](#project-and-team-defaults-local-server)
-8. [Troubleshooting](#troubleshooting)
-9. [Examples and Best Practices](#examples-and-best-practices)
-10. [Frequently Asked Questions](#frequently-asked-questions)
-11. [Contributing](#contributing)
+6. [Azure DevOps Server 2022.1 (Self-hosted)](#azure-devops-server-20221-self-hosted)
+7. [Using Domains (Local Server)](#using-domains-local-server)
+8. [Project and Team Defaults (Local Server)](#project-and-team-defaults-local-server)
+9. [Troubleshooting](#troubleshooting)
+10. [Examples and Best Practices](#examples-and-best-practices)
+11. [Frequently Asked Questions](#frequently-asked-questions)
+12. [Contributing](#contributing)
 
 ## Overview
 
@@ -127,6 +128,69 @@ For better tool selection, add `.github/copilot-instructions.md` to your project
 ```text
 This project uses Azure DevOps. Always check whether the Azure DevOps MCP server has a tool relevant to the user's request.
 ```
+
+## Azure DevOps Server 2022.1 (Self-hosted)
+
+This checkout supports connecting the local MCP server to an Azure DevOps Server 2022.1 collection (build `19.225.34309.2` or later in the 2022.1 release). Pass the full HTTPS collection URL in place of the cloud organization name, including any virtual directory such as `/tfs`. PAT authentication is selected automatically for a Server URL. Cloud organization names retain their existing behavior.
+
+Build this checkout before using the configuration below; running the published npm package does not include these local changes:
+
+```powershell
+npm ci
+npm run build
+```
+
+For VS Code, add the following server and input to `.vscode/mcp.json`. Replace the checkout path and collection URL with your own values. The password prompt takes the **raw PAT**, without base64 encoding.
+
+```json
+{
+  "inputs": [
+    {
+      "id": "ado_server_pat",
+      "type": "promptString",
+      "description": "Azure DevOps Server personal access token",
+      "password": true
+    }
+  ],
+  "servers": {
+    "ado-server": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "D:/path/to/azure-devops-mcp/dist/index.js",
+        "https://ado.example.com/tfs/DefaultCollection",
+        "-a",
+        "pat",
+        "-d",
+        "core",
+        "work",
+        "work-items",
+        "repositories",
+        "pipelines",
+        "wiki",
+        "test-plans"
+      ],
+      "env": {
+        "AZURE_DEVOPS_PAT": "${input:ado_server_pat}"
+      }
+    }
+  }
+}
+```
+
+For other MCP clients, use the same command, arguments, and `AZURE_DEVOPS_PAT` environment variable through that client's configuration. The existing `PERSONAL_ACCESS_TOKEN=base64(username:PAT)` input remains supported. If both variables are present, `AZURE_DEVOPS_PAT` takes precedence. Tokens should not be committed to configuration files.
+
+The adapter skips cloud tenant discovery in PAT mode. SDK calls retain the client's API version negotiation, and direct REST calls use endpoint-specific 7.1 versions on Server 2022.1. See Microsoft's [Server/API version mapping](https://learn.microsoft.com/en-us/rest/api/azure/devops/#api-and-tfs-version-mapping).
+
+Current scope and limitations:
+
+- Uses PAT authentication; Windows integrated authentication (NTLM/Kerberos) is not implemented.
+- Supports collection routing for projects, work items, repositories/PRs, pipelines, Wiki, test plans, and identity lookup. Build test results use the Server Test API.
+- Add `search` to the domains only when the corresponding Search features are configured and indexed on the server. Code, Wiki, and work item search use the collection's Search API. Commit Search is not supported by this adapter on Server and returns a clear error.
+- Advanced Security tools are automatically disabled for Server 2022.1.
+- Server PATs in direct REST requests are restricted to the configured HTTPS origin and collection path. Redirects are rejected; configure the canonical collection URL.
+- If your server uses an internal certificate authority, set `NODE_EXTRA_CA_CERTS` to the absolute path of a PEM file containing the trusted CA certificates before starting the MCP process. TLS certificate verification remains enabled.
+- Automated tests cover request routing, authentication boundaries, API selection, and cloud regressions. These do not replace validation against your internal server. Start with listing projects, then reading a repository and work item; validate write operations on a test project.
 
 ## Using Domains (Local Server)
 

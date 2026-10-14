@@ -6,6 +6,7 @@ import { WebApi } from "azure-devops-node-api";
 import { z } from "zod";
 import { WikiPagesBatchRequest } from "azure-devops-node-api/interfaces/WikiInterfaces.js";
 import { apiVersion, extractAdoStreamError, getOrgFromUrl } from "../utils.js";
+import { getRestApiVersion, isServerUrl, isWithinCollection } from "../connection-settings.js";
 import { createExternalContentResponse } from "../shared/content-safety.js";
 
 const WIKI_TOOLS = {
@@ -120,7 +121,7 @@ function configureWikiTools(server: McpServer, tokenProvider: () => Promise<stri
           const baseUrl = connection.serverUrl.replace(/\/$/, "");
           const params = new URLSearchParams({
             "path": normalizedPath,
-            "api-version": apiVersion,
+            "api-version": getRestApiVersion(connection.serverUrl, apiVersion),
           });
 
           if (recursionLevel) {
@@ -177,12 +178,14 @@ function configureWikiTools(server: McpServer, tokenProvider: () => Promise<stri
             // URL would be silently ignored and content fetched from the configured org instead.
             const configuredOrg = getOrgFromUrl(connection.serverUrl);
             const urlOrg = getOrgFromUrl(url);
-            if (configuredOrg && urlOrg !== configuredOrg) {
+            if (isServerUrl(connection.serverUrl) ? !isWithinCollection(url, connection.serverUrl) : configuredOrg && urlOrg !== configuredOrg) {
               return {
                 content: [
                   {
                     type: "text",
-                    text: `Error fetching wiki page content: The provided URL targets organization '${urlOrg ?? "unknown"}', which does not match the configured organization '${configuredOrg}'. Cross-organization requests are not allowed.`,
+                    text: isServerUrl(connection.serverUrl)
+                      ? "Error fetching wiki page content: The provided URL does not belong to the configured Azure DevOps Server collection. Cross-collection requests are not allowed."
+                      : `Error fetching wiki page content: The provided URL targets organization '${urlOrg ?? "unknown"}', which does not match the configured organization '${configuredOrg}'. Cross-organization requests are not allowed.`,
                   },
                 ],
                 isError: true,

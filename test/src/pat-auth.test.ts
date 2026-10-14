@@ -42,6 +42,7 @@ describe("PAT authentication", () => {
 
   beforeEach(() => {
     process.env = { ...originalEnv };
+    delete process.env["AZURE_DEVOPS_PAT"];
     (AzureCliCredential as unknown as jest.Mock).mockReset();
     (ChainedTokenCredential as unknown as jest.Mock).mockReset();
     (DefaultAzureCredential as unknown as jest.Mock).mockReset();
@@ -117,9 +118,55 @@ describe("PAT authentication", () => {
       const rewrittenRequest = fetchMock.mock.calls[0][0] as Request;
       expect(rewrittenRequest.headers.get("Authorization")).toBe(`Basic ${basicValue}`);
     });
+
+    it.each([false, true])("uses Basic auth for the configured Server and blocks redirects (Request=%s)", async (useRequest) => {
+      const collectionUrl = "https://ado.example.com/tfs/DefaultCollection";
+      const fetchMock = jest.fn<typeof fetch>().mockResolvedValue(new Response());
+      globalThis.fetch = fetchMock;
+      installPatFetchInterceptor(basicValue, collectionUrl);
+      const endpoint = `${collectionUrl}/_apis/projects`;
+      const headers = { Authorization: `Bearer ${basicValue}` };
+      if (useRequest) {
+        await fetch(new Request(endpoint, { headers, redirect: "follow" }));
+        const request = fetchMock.mock.calls[0][0] as Request;
+        expect(request.headers.get("Authorization")).toBe(`Basic ${basicValue}`);
+        expect(request.redirect).toBe("error");
+      } else {
+        await fetch(endpoint, { headers, redirect: "follow" });
+        expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get("Authorization")).toBe(`Basic ${basicValue}`);
+        expect(fetchMock.mock.calls[0][1]?.redirect).toBe("error");
+      }
+    });
+
+    it.each([
+      "https://dev.azure.com/org/_apis/projects",
+      "https://ado.example.com.attacker.example/tfs/DefaultCollection/_apis/projects",
+      "https://ado.example.com:8443/tfs/DefaultCollection/_apis/projects",
+      "https://ado.example.com/tfs/OtherCollection/_apis/projects",
+      "https://ado.example.com/tfs/DefaultCollectionOther/_apis/projects",
+      "http://ado.example.com/tfs/DefaultCollection/_apis/projects",
+    ])("never sends a Server PAT to another destination: %s", async (url) => {
+      const fetchMock = jest.fn<typeof fetch>().mockResolvedValue(new Response());
+      globalThis.fetch = fetchMock;
+      installPatFetchInterceptor(basicValue, "https://ado.example.com/tfs/DefaultCollection");
+      await expect(fetch(url, { headers: { Authorization: `Bearer ${basicValue}` } })).rejects.toThrow("Refusing to send");
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
   });
 
   describe("createAuthenticator('pat')", () => {
+    it("accepts a raw PAT without requiring the user to base64 encode it", async () => {
+      process.env["AZURE_DEVOPS_PAT"] = "raw-server-pat";
+      delete process.env["PERSONAL_ACCESS_TOKEN"];
+      expect(await createAuthenticator("pat")()).toBe(Buffer.from(":raw-server-pat").toString("base64"));
+    });
+
+    it("prefers AZURE_DEVOPS_PAT when both PAT variables are supplied", async () => {
+      process.env["AZURE_DEVOPS_PAT"] = "raw-server-pat";
+      process.env["PERSONAL_ACCESS_TOKEN"] = Buffer.from(":legacy-pat").toString("base64");
+      expect(await createAuthenticator("pat")()).toBe(Buffer.from(":raw-server-pat").toString("base64"));
+    });
+
     it("should return the base64 value as-is from PERSONAL_ACCESS_TOKEN", async () => {
       const b64Pat = Buffer.from("user@example.com:myrawpat").toString("base64");
       process.env["PERSONAL_ACCESS_TOKEN"] = b64Pat;

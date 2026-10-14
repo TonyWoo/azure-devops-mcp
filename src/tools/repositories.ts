@@ -28,7 +28,7 @@ import { getCurrentUserDetails, getUserIdFromEmail } from "./auth.js";
 import { GitRepository } from "azure-devops-node-api/interfaces/TfvcInterfaces.js";
 import { WebApiTagDefinition } from "azure-devops-node-api/interfaces/CoreInterfaces.js";
 import { extractAdoStreamError, getEnumKeys, streamToString, apiVersion } from "../utils.js";
-import { orgName } from "../index.js";
+import { getServiceUrl, isServerUrl } from "../connection-settings.js";
 import { createExternalContentResponse } from "../shared/content-safety.js";
 
 const REPO_TOOLS = {
@@ -802,8 +802,15 @@ function configureRepoTools(server: McpServer, tokenProvider: () => Promise<stri
       top: z.coerce.number().default(10).describe("Maximum number of results to return"),
     },
     async ({ searchText, project, repository, branch, author, commitStartDate, commitEndDate, orderBy, includeFacets, skip, top }) => {
+      const connection = await connectionProvider();
+      if (isServerUrl(connection.serverUrl)) {
+        return {
+          content: [{ type: "text", text: "Commit Search is not supported by this adapter on Azure DevOps Server 2022.1. Use repo_repository and repo_branch to browse repositories and branches." }],
+          isError: true,
+        };
+      }
       const accessToken = await tokenProvider();
-      const url = `https://almsearch.dev.azure.com/${orgName}/_apis/search/commitSearchResults?api-version=${apiVersion}`;
+      const url = `${getServiceUrl(connection.serverUrl, "search")}/_apis/search/commitSearchResults?api-version=${apiVersion}`;
 
       const requestBody: Record<string, unknown> = { searchText, includeFacets, $skip: skip, $top: top };
 

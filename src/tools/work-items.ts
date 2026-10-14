@@ -10,6 +10,7 @@ import { WorkItemExpand, WorkItemRelation } from "azure-devops-node-api/interfac
 import { QueryExpand } from "azure-devops-node-api/interfaces/WorkItemTrackingInterfaces.js";
 import { z } from "zod";
 import { batchApiVersion, markdownCommentsApiVersion, getEnumKeys, safeEnumConvert, encodeFormattedValue } from "../utils.js";
+import { getRestApiVersion } from "../connection-settings.js";
 import { elicitProject, elicitTeam } from "../shared/elicitations.js";
 import { createExternalContentResponse } from "../shared/content-safety.js";
 import { getUserIdentityFromEmail } from "./auth.js";
@@ -979,7 +980,7 @@ function configureWorkItemTools(server: McpServer, tokenProvider: () => Promise<
 
         if (action === "add") {
           const response = await fetch(
-            `${orgUrl}/${encodeURIComponent(resolvedProject)}/_apis/wit/workItems/${workItemId}/comments?format=${formatParameter}&api-version=${markdownCommentsApiVersion}`,
+            `${orgUrl}/${encodeURIComponent(resolvedProject)}/_apis/wit/workItems/${workItemId}/comments?format=${formatParameter}&api-version=${getRestApiVersion(orgUrl, markdownCommentsApiVersion, "7.1-preview.4")}`,
             {
               method: "POST",
               headers: {
@@ -1002,7 +1003,7 @@ function configureWorkItemTools(server: McpServer, tokenProvider: () => Promise<
           if (!commentId) return { content: [{ type: "text", text: "commentId is required for update" }], isError: true };
 
           const response = await fetch(
-            `${orgUrl}/${encodeURIComponent(resolvedProject)}/_apis/wit/workItems/${workItemId}/comments/${commentId}?format=${formatParameter}&api-version=${markdownCommentsApiVersion}`,
+            `${orgUrl}/${encodeURIComponent(resolvedProject)}/_apis/wit/workItems/${workItemId}/comments/${commentId}?format=${formatParameter}&api-version=${getRestApiVersion(orgUrl, markdownCommentsApiVersion, "7.1-preview.4")}`,
             {
               method: "PATCH",
               headers: {

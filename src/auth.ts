@@ -4,6 +4,7 @@
 import { AzureCliCredential, ChainedTokenCredential, DefaultAzureCredential, TokenCredential } from "@azure/identity";
 import { logger } from "./logger.js";
 import { azureDevOpsScopes, OAuthAuthenticator } from "./oauth.js";
+import { isWithinCollection } from "./connection-settings.js";
 
 const patAllowedHosts = new Set(["dev.azure.com", "vssps.dev.azure.com", "almsearch.dev.azure.com"]);
 
@@ -12,7 +13,7 @@ function isPatAllowedHost(hostname: string): boolean {
   return patAllowedHosts.has(normalizedHostname) || normalizedHostname.endsWith(".visualstudio.com");
 }
 
-function installPatFetchInterceptor(basicValue: string): void {
+function installPatFetchInterceptor(basicValue: string, collectionUrl?: string): void {
   const originalFetch = globalThis.fetch;
   const patBearerValue = `Bearer ${basicValue}`;
 
@@ -23,15 +24,18 @@ function installPatFetchInterceptor(basicValue: string): void {
     }
 
     const requestUrl = new URL(input instanceof Request ? input.url : input.toString());
-    if (requestUrl.protocol !== "https:" || !isPatAllowedHost(requestUrl.hostname)) {
+    const allowed = collectionUrl ? isWithinCollection(requestUrl.toString(), collectionUrl) : isPatAllowedHost(requestUrl.hostname);
+    if (requestUrl.protocol !== "https:" || !allowed) {
       throw new Error(`Refusing to send a Personal Access Token to untrusted destination '${requestUrl.origin}'`);
     }
 
     headers.set("Authorization", `Basic ${basicValue}`);
+    // Do not forward Server credentials through redirects outside the collection.
+    const requestInit = { ...init, headers, ...(collectionUrl ? { redirect: "error" as const } : {}) };
     if (input instanceof Request) {
-      return originalFetch(new Request(input, { ...init, headers }));
+      return originalFetch(new Request(input, requestInit));
     }
-    return originalFetch(input, { ...init, headers });
+    return originalFetch(input, requestInit);
   };
 }
 
@@ -39,13 +43,17 @@ function createAuthenticator(type: string, tenantId?: string): () => Promise<str
   logger.debug(`Creating authenticator of type '${type}' with tenantId='${tenantId ?? "undefined"}'`);
   switch (type) {
     case "pat":
-      logger.debug(`Authenticator: Using PAT authentication (PERSONAL_ACCESS_TOKEN)`);
+      logger.debug("Authenticator: Using PAT authentication (AZURE_DEVOPS_PAT or PERSONAL_ACCESS_TOKEN)");
       return async () => {
+        const rawPat = process.env["AZURE_DEVOPS_PAT"];
+        if (rawPat) {
+          return Buffer.from(`:${rawPat}`, "utf8").toString("base64");
+        }
         logger.debug(`${type}: Reading token from PERSONAL_ACCESS_TOKEN environment variable`);
         const b64Pat = process.env["PERSONAL_ACCESS_TOKEN"];
         if (!b64Pat) {
           logger.error(`${type}: PERSONAL_ACCESS_TOKEN environment variable is not set or empty`);
-          throw new Error("Environment variable 'PERSONAL_ACCESS_TOKEN' is not set or empty. Please set it with a valid base64-encoded Azure DevOps Personal Access Token.");
+          throw new Error("Environment variable 'PERSONAL_ACCESS_TOKEN' is not set or empty. Set AZURE_DEVOPS_PAT to a raw PAT, or PERSONAL_ACCESS_TOKEN to base64(username:PAT).");
         }
         // Return base64 value as-is — caller uses it directly as the Basic auth credential
         logger.debug(`${type}: Successfully retrieved PAT from environment variable`);

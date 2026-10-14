@@ -17,6 +17,7 @@ import { UserAgentComposer } from "./useragent.js";
 import { getCliArgs } from "./utils.js";
 import { packageVersion } from "./version.js";
 import { DomainsManager } from "./shared/domains.js";
+import { resolveConnectionSettings } from "./connection-settings.js";
 
 function isGitHubCodespaceEnv(): boolean {
   return process.env.CODESPACES === "true" && !!process.env.CODESPACE_NAME;
@@ -31,7 +32,7 @@ const argv = yargs(getCliArgs())
   .version(packageVersion)
   .command("$0 <organization> [options]", "Azure DevOps MCP Server", (yargs) => {
     yargs.positional("organization", {
-      describe: "Azure DevOps organization name",
+      describe: "Azure DevOps organization name or Azure DevOps Server 2022.1 HTTPS collection URL",
       type: "string",
       demandOption: true,
     });
@@ -45,10 +46,9 @@ const argv = yargs(getCliArgs())
   })
   .option("authentication", {
     alias: "a",
-    describe: "Type of authentication to use",
+    describe: "Authentication type (defaults to pat for Server collection URLs, interactive or azcli for cloud organizations)",
     type: "string",
     choices: ["interactive", "azcli", "env", "envvar", "pat"],
-    default: defaultAuthenticationType,
   })
   .option("tenant", {
     alias: "t",
@@ -58,11 +58,15 @@ const argv = yargs(getCliArgs())
   .help()
   .parseSync();
 
-export const orgName = argv.organization as string;
-const orgUrl = "https://dev.azure.com/" + orgName;
+const settings = resolveConnectionSettings(argv.organization as string, argv.authentication, defaultAuthenticationType);
+export const orgName = settings.organization;
+const orgUrl = settings.serverUrl;
 
 const domainsManager = new DomainsManager(argv.domains);
 export const enabledDomains = domainsManager.getEnabledDomains();
+if (settings.onPremises && enabledDomains.delete("advanced-security")) {
+  logger.info("Advanced Security tools are unavailable on Azure DevOps Server 2022.1 and have been disabled.");
+}
 
 function getAzureDevOpsClient(getAzureDevOpsToken: () => Promise<string>, userAgentComposer: UserAgentComposer, authType: string): () => Promise<WebApi> {
   return async () => {
@@ -83,7 +87,7 @@ async function main() {
   logger.info("Starting Azure DevOps MCP Server", {
     organization: orgName,
     organizationUrl: orgUrl,
-    authentication: argv.authentication,
+    authentication: settings.authentication,
     tenant: argv.tenant,
     domains: argv.domains,
     enabledDomains: Array.from(enabledDomains),
@@ -105,19 +109,20 @@ async function main() {
   server.server.oninitialized = () => {
     userAgentComposer.appendMcpClientInfo(server.server.getClientVersion());
   };
-  const tenantId = argv.tenant ?? (await getOrgTenant(orgName));
-  const authenticator = createAuthenticator(argv.authentication, tenantId);
+  const needsTenant = ["interactive", "azcli", "env"].includes(settings.authentication);
+  const tenantId = needsTenant ? (argv.tenant ?? (await getOrgTenant(orgName))) : undefined;
+  const authenticator = createAuthenticator(settings.authentication, tenantId);
 
-  if (argv.authentication === "pat") {
+  if (settings.authentication === "pat") {
     const basicValue = await authenticator();
-    installPatFetchInterceptor(basicValue);
+    installPatFetchInterceptor(basicValue, settings.onPremises ? orgUrl : undefined);
     logger.debug("PAT mode: global fetch interceptor installed to rewrite Bearer -> Basic auth headers");
   }
 
   // removing prompts until further notice
   // configurePrompts(server);
 
-  configureAllTools(server, authenticator, getAzureDevOpsClient(authenticator, userAgentComposer, argv.authentication), () => userAgentComposer.userAgent, enabledDomains);
+  configureAllTools(server, authenticator, getAzureDevOpsClient(authenticator, userAgentComposer, settings.authentication), () => userAgentComposer.userAgent, enabledDomains);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
